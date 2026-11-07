@@ -7,6 +7,51 @@
 #define MAX_INPUT 1024
 #define MAX_ARGS 64
 
+/* max_args includes the final NULL slot; negative results indicate errors. */
+static int lexer(char *input, char **args, int max_args)
+{
+  enum { NORMAL, IN_QUOTE } state = NORMAL;
+  char *read = input;
+  char *write = input;
+  int argc = 0;
+  int in_arg = 0;
+
+  if (max_args <= 0) {
+    return -1;
+  }
+  args[0] = NULL;
+
+  while (*read != '\0') {
+    char c = *read++;
+
+    if (state == NORMAL && (c == ' ' || c == '\t')) {
+      if (in_arg) {
+        *write++ = '\0';
+        in_arg = 0;
+      }
+      continue;
+    }
+
+    if (!in_arg) {
+      if (argc == max_args - 1) {
+        return -2;
+      }
+      args[argc++] = write;
+      args[argc] = NULL;
+      in_arg = 1;
+    }
+
+    if (c == '"') {
+      state = state == NORMAL ? IN_QUOTE : NORMAL;
+    } else {
+      *write++ = c;
+    }
+  }
+
+  *write = '\0';
+  return state == IN_QUOTE ? -1 : argc;
+}
+
 static int handle_builtin(char **args)
 {
   if (args[0] == NULL) {
@@ -56,7 +101,7 @@ int main(void)
 
   while (1) {
     char *args[MAX_ARGS];
-    int argc = 0;
+    int argc;
     int builtin_result;
     pid_t pid;
     int status;
@@ -71,12 +116,15 @@ int main(void)
 
     input[strcspn(input, "\n")] = '\0';
 
-    char *token = strtok(input, " \t");
-    while (token != NULL && argc < MAX_ARGS - 1) {
-      args[argc++] = token;
-      token = strtok(NULL, " \t");
+    argc = lexer(input, args, MAX_ARGS);
+    if (argc < 0) {
+      fprintf(stderr, "parse error: %s\n",
+              argc == -2 ? "too many arguments" : "unclosed double quote");
+      continue;
     }
-    args[argc] = NULL;
+    if (argc == 0) {
+      continue;
+    }
 
     builtin_result = handle_builtin(args);
     if (builtin_result == 1) {
